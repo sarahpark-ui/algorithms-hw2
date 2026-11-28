@@ -1,132 +1,236 @@
-"""Measure separate-chaining lookup costs and write a CSV table and SVG chart."""
+"""Compare separate chaining and linear probing lookup costs."""
 
 import csv
 from pathlib import Path
+import random
 
-from src.hash_table import HashTable
+from src.hash_table import HashTable, LinearProbingHashTable
 
 
 CAPACITY = 4096
-LOAD_FACTORS = (0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
+LOAD_FACTORS = tuple(step / 10 for step in range(1, 10))
 MISS_QUERIES = 2048
 OUTPUT_DIR = Path(__file__).resolve().parent
+METRICS = (
+    ("successful_comparisons", "성공 탐색 키 비교"),
+    ("unsuccessful_comparisons", "실패 탐색 키 비교"),
+    ("successful_slots", "성공 탐색 슬롯 확인"),
+    ("unsuccessful_slots", "실패 탐색 슬롯 확인"),
+)
+TABLES = (
+    ("chaining", HashTable),
+    ("linear", LinearProbingHashTable),
+)
 
 
-def measure(load_factor):
-    table = HashTable(capacity=CAPACITY)
-    item_count = round(CAPACITY * load_factor)
-    keys = [f"item-{index:08d}" for index in range(item_count)]
-    for index, key in enumerate(keys):
-        table.put(key, index)
-
-    successful = 0
-    for key in keys:
-        table.get(key)
-        successful += table.last_comparisons
-
-    unsuccessful = 0
-    for index in range(MISS_QUERIES):
-        try:
-            table.get(f"missing-{index:08d}")
-        except KeyError:
-            unsuccessful += table.last_comparisons
-
+def _theoretical_costs(strategy, load_factor):
+    if strategy == "chaining":
+        return {
+            "successful_comparisons": 1 + load_factor / 2,
+            "unsuccessful_comparisons": load_factor,
+            "successful_slots": 1,
+            "unsuccessful_slots": 1,
+        }
+    successful_probes = 0.5 * (1 + 1 / (1 - load_factor))
+    unsuccessful_probes = 0.5 * (1 + 1 / (1 - load_factor) ** 2)
     return {
-        "load_factor": item_count / CAPACITY,
-        "items": item_count,
-        "successful_measured": successful / item_count,
-        "successful_theory": 1 + (item_count / CAPACITY) / 2,
-        "unsuccessful_measured": unsuccessful / MISS_QUERIES,
-        "unsuccessful_theory": item_count / CAPACITY,
+        "successful_comparisons": successful_probes,
+        "unsuccessful_comparisons": unsuccessful_probes - 1,
+        "successful_slots": successful_probes,
+        "unsuccessful_slots": unsuccessful_probes,
     }
+
+
+def measure(load_factor, capacity=CAPACITY, miss_queries=MISS_QUERIES):
+    item_count = round(capacity * load_factor)
+    actual_load = item_count / capacity
+    generator = random.Random(2026)
+    alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    keys = [
+        "".join(generator.choices(alphabet, k=12))
+        for _ in range(item_count)
+    ]
+    misses = [f"missing-{index:08d}" for index in range(miss_queries)]
+    rows = []
+
+    for strategy, table_class in TABLES:
+        table = table_class(capacity=capacity)
+        for index, key in enumerate(keys):
+            table.put(key, index)
+
+        measured = {
+            "successful_comparisons": 0,
+            "unsuccessful_comparisons": 0,
+            "successful_slots": 0,
+            "unsuccessful_slots": 0,
+        }
+        for key in keys:
+            table.get(key)
+            measured["successful_comparisons"] += table.last_comparisons
+            measured["successful_slots"] += table.last_slot_checks
+
+        for key in misses:
+            try:
+                table.get(key)
+            except KeyError:
+                measured["unsuccessful_comparisons"] += table.last_comparisons
+                measured["unsuccessful_slots"] += table.last_slot_checks
+
+        theory = _theoretical_costs(strategy, actual_load)
+        row = {
+            "strategy": strategy,
+            "load_factor": actual_load,
+            "items": item_count,
+            "successful_queries": item_count,
+            "unsuccessful_queries": miss_queries,
+        }
+        for metric, _ in METRICS:
+            divisor = item_count if metric.startswith("successful") else miss_queries
+            row[f"{metric}_measured"] = measured[metric] / divisor
+            row[f"{metric}_theory"] = theory[metric]
+        rows.append(row)
+    return rows
 
 
 def write_csv(rows):
     output = OUTPUT_DIR / "probe_results.csv"
     with output.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=rows[0].keys())
+        writer = csv.DictWriter(
+            file,
+            fieldnames=rows[0].keys(),
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(
-            {key: f"{value:.4f}" if isinstance(value, float) else value for key, value in row.items()}
+            {
+                key: f"{value:.4f}" if isinstance(value, float) else value
+                for key, value in row.items()
+            }
             for row in rows
         )
     return output
 
 
 def write_svg(rows):
-    width, height = 900, 520
-    left, right, top, bottom = 80, 30, 45, 80
-    plot_width, plot_height = width - left - right, height - top - bottom
-    max_x = 4.0
-    max_y = max(row[key] for row in rows for key in (
-        "successful_measured", "successful_theory", "unsuccessful_measured", "unsuccessful_theory"
-    )) * 1.12
-
-    def point(row, key):
-        x = left + row["load_factor"] / max_x * plot_width
-        y = top + (1 - row[key] / max_y) * plot_height
-        return f"{x:.1f},{y:.1f}"
-
-    series = (
-        ("successful_measured", "#1769aa", "성공 탐색 측정"),
-        ("successful_theory", "#1769aa", "성공 탐색 이론"),
-        ("unsuccessful_measured", "#d1495b", "실패 탐색 측정"),
-        ("unsuccessful_theory", "#d1495b", "실패 탐색 이론"),
+    width, height = 1000, 760
+    panels = (
+        (70, 55, 410, 275),
+        (545, 55, 410, 275),
+        (70, 405, 410, 275),
+        (545, 405, 410, 275),
     )
+    colors = {"chaining": "#1769aa", "linear": "#d1495b"}
+    labels = {"chaining": "별도 체이닝", "linear": "선형 탐지"}
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="450" y="25" text-anchor="middle" font-family="sans-serif" font-size="18">적재율별 평균 탐색 비교 횟수</text>',
+        '<text x="500" y="28" text-anchor="middle" font-family="sans-serif" font-size="19">적재율별 탐색 비용: 실측과 이론</text>',
     ]
 
-    for tick in range(5):
-        value = max_y * tick / 4
-        y = top + (1 - tick / 4) * plot_height
-        parts.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#ddd"/>')
-        parts.append(f'<text x="{left-10}" y="{y+4:.1f}" text-anchor="end" font-family="sans-serif" font-size="12">{value:.1f}</text>')
-        x = left + tick / 4 * plot_width
-        parts.append(f'<text x="{x:.1f}" y="{height-bottom+22}" text-anchor="middle" font-family="sans-serif" font-size="12">{tick}</text>')
-    parts.extend((
-        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#333"/>',
-        f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="#333"/>',
-        f'<text x="{left + plot_width/2}" y="{height-18}" text-anchor="middle" font-family="sans-serif" font-size="14">적재율 (α)</text>',
-        f'<text x="20" y="{top + plot_height/2}" text-anchor="middle" transform="rotate(-90 20 {top + plot_height/2})" font-family="sans-serif" font-size="14">평균 비교 횟수</text>',
-    ))
+    for (metric, title), (left, top, panel_width, panel_height) in zip(METRICS, panels):
+        plot_left, plot_top = left + 48, top + 36
+        plot_width, plot_height = panel_width - 62, panel_height - 82
+        all_values = [
+            row[f"{metric}_{kind}"]
+            for row in rows
+            for kind in ("measured", "theory")
+        ]
+        max_y = max(all_values) * 1.12 or 1
+        parts.append(
+            f'<text x="{left + panel_width/2}" y="{top + 18}" text-anchor="middle" '
+            f'font-family="sans-serif" font-size="14">{title}</text>'
+        )
+        for tick in range(4):
+            fraction = tick / 3
+            value = max_y * fraction
+            y = plot_top + (1 - fraction) * plot_height
+            parts.append(
+                f'<line x1="{plot_left}" y1="{y:.1f}" x2="{plot_left + plot_width}" '
+                f'y2="{y:.1f}" stroke="#ddd"/>'
+            )
+            parts.append(
+                f'<text x="{plot_left - 7}" y="{y + 4:.1f}" text-anchor="end" '
+                f'font-family="sans-serif" font-size="10">{value:.1f}</text>'
+            )
+        for tick in range(1, 10, 2):
+            load = tick / 10
+            x = plot_left + (load - 0.1) / 0.8 * plot_width
+            parts.append(
+                f'<text x="{x:.1f}" y="{plot_top + plot_height + 17}" '
+                f'text-anchor="middle" font-family="sans-serif" font-size="10">{load:.1f}</text>'
+            )
+        parts.extend((
+            f'<line x1="{plot_left}" y1="{plot_top}" x2="{plot_left}" '
+            f'y2="{plot_top + plot_height}" stroke="#333"/>',
+            f'<line x1="{plot_left}" y1="{plot_top + plot_height}" '
+            f'x2="{plot_left + plot_width}" y2="{plot_top + plot_height}" stroke="#333"/>',
+            f'<text x="{plot_left + plot_width/2}" y="{top + panel_height - 7}" '
+            'text-anchor="middle" font-family="sans-serif" font-size="11">적재율 (α)</text>',
+        ))
 
-    legend_y = height - 52
-    for index, (key, color, label) in enumerate(series):
-        row_index, column = divmod(index, 2)
-        x = left + column * 365
-        y = legend_y + row_index * 20
-        dash = ' stroke-dasharray="6 4"' if key.endswith("_theory") else ""
-        coordinates = " ".join(point(row, key) for row in rows)
-        parts.append(f'<polyline points="{coordinates}" fill="none" stroke="{color}" stroke-width="2"{dash}/>')
-        parts.append(f'<line x1="{x}" y1="{y}" x2="{x+26}" y2="{y}" stroke="{color}" stroke-width="2"{dash}/>')
-        parts.append(f'<text x="{x+34}" y="{y+4}" font-family="sans-serif" font-size="12">{label}</text>')
+        for strategy, _ in TABLES:
+            for kind in ("measured", "theory"):
+                points = []
+                for row in rows:
+                    if row["strategy"] != strategy:
+                        continue
+                    x = plot_left + (row["load_factor"] - 0.1) / 0.8 * plot_width
+                    y = plot_top + (
+                        1 - row[f"{metric}_{kind}"] / max_y
+                    ) * plot_height
+                    points.append(f"{x:.1f},{y:.1f}")
+                dash = ' stroke-dasharray="5 4"' if kind == "theory" else ""
+                parts.append(
+                    f'<polyline points="{" ".join(points)}" fill="none" '
+                    f'stroke="{colors[strategy]}" stroke-width="2"{dash}/>'
+                )
+
+    legend = (
+        ("chaining", "별도 체이닝 실측", False),
+        ("chaining", "별도 체이닝 이론", True),
+        ("linear", "선형 탐지 실측", False),
+        ("linear", "선형 탐지 이론", True),
+    )
+    for index, (strategy, label, theoretical) in enumerate(legend):
+        x = 170 + index * 190
+        dash = ' stroke-dasharray="5 4"' if theoretical else ""
+        parts.append(
+            f'<line x1="{x}" y1="730" x2="{x + 25}" y2="730" '
+            f'stroke="{colors[strategy]}" stroke-width="2"{dash}/>'
+        )
+        parts.append(
+            f'<text x="{x + 31}" y="734" font-family="sans-serif" font-size="11">{label}</text>'
+        )
     parts.append("</svg>")
-
     output = OUTPUT_DIR / "probe_results.svg"
     output.write_text("\n".join(parts) + "\n", encoding="utf-8")
     return output
 
 
 def main():
-    rows = [measure(load_factor) for load_factor in LOAD_FACTORS]
+    rows = [
+        row
+        for load_factor in LOAD_FACTORS
+        for row in measure(load_factor)
+    ]
     csv_path = write_csv(rows)
     svg_path = write_svg(rows)
-    successful_error = max(abs(row["successful_measured"] - row["successful_theory"]) for row in rows)
-    unsuccessful_error = max(abs(row["unsuccessful_measured"] - row["unsuccessful_theory"]) for row in rows)
 
-    print("α, 성공 측정/이론, 실패 측정/이론")
+    print("적재율별 평균 탐색 비용 (실측 / 이론)")
     for row in rows:
         print(
-            f'{row["load_factor"]:.2f}, '
-            f'{row["successful_measured"]:.3f}/{row["successful_theory"]:.3f}, '
-            f'{row["unsuccessful_measured"]:.3f}/{row["unsuccessful_theory"]:.3f}'
+            f'{row["strategy"]:8} α={row["load_factor"]:.2f} '
+            f'성공 비교 {row["successful_comparisons_measured"]:.3f}/'
+            f'{row["successful_comparisons_theory"]:.3f}, '
+            f'실패 비교 {row["unsuccessful_comparisons_measured"]:.3f}/'
+            f'{row["unsuccessful_comparisons_theory"]:.3f}, '
+            f'성공 슬롯 {row["successful_slots_measured"]:.3f}/'
+            f'{row["successful_slots_theory"]:.3f}, '
+            f'실패 슬롯 {row["unsuccessful_slots_measured"]:.3f}/'
+            f'{row["unsuccessful_slots_theory"]:.3f}'
         )
-    print(f"최대 절대 오차: 성공 {successful_error:.3f}, 실패 {unsuccessful_error:.3f}")
     print(f"생성: {csv_path.relative_to(OUTPUT_DIR.parent)}, {svg_path.relative_to(OUTPUT_DIR.parent)}")
-    print("이론값은 균등 분포 가정의 평균이다. 고정 키/용량에서는 해시 분포와 유한 표본 때문에 차이가 난다.")
+    print("이론값은 균등 분포 가정의 평균값이다. 키 집합/해시 분포에 따라 실측값과 차이가 난다.")
 
 
 if __name__ == "__main__":

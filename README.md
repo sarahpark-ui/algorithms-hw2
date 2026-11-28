@@ -40,6 +40,17 @@
 
 외부 라이브러리는 쓰지 않습니다. Python 표준 모듈만으로 충분합니다.
 
+## 해시 테이블 방식 선택 및 실험
+
+기본 서버는 별도 체이닝을 사용합니다. 선형 탐지 방식으로 실행하려면
+`make serve TABLE=linear`을 사용합니다. `/table` 화면에는 슬롯 상태와 마지막
+탐색 경로, Horner 해시 계산 과정 및 키 비교/슬롯 확인 횟수가 표시됩니다.
+
+`make experiment`는 적재율 0.1~0.9에서 동일한 키 집합과 용량을 사용해
+두 방식의 성공/실패 탐색 키 비교 횟수와 슬롯 확인 횟수를 이론값과 함께
+`experiments/probe_results.csv` 및 `experiments/probe_results.svg`에 기록합니다.
+`make report`는 2쪽 이내의 PDF 실험 보고서도 생성합니다.
+
 ## 로컬에서 하기
 
 ```sh

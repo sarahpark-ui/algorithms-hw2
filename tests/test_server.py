@@ -2,6 +2,7 @@ import unittest
 import threading
 from http.client import HTTPConnection
 from http.server import HTTPServer
+from src.hash_table import LinearProbingHashTable
 from src.server import Handler
 from src.shortener import Shortener
 
@@ -32,3 +33,22 @@ class ServerTests(unittest.TestCase):
         self.assertIn("Horner", self.request("GET", "/table")[2])
         self.assertEqual(self.request("GET", "/missing")[0], 404)
         self.assertEqual(self.request("POST", "/", "url=invalid")[0], 400)
+
+    def test_linear_probing_table_page_shows_slots_and_probe_path(self):
+        self.server.shortener = Shortener(
+            table_class=LinearProbingHashTable,
+            capacity=5,
+        )
+        self.server.shortener.shorten("https://example.com/a")
+        self.server.shortener.shorten("https://example.com/b")
+
+        status, _, page = self.request("GET", "/table")
+
+        self.assertEqual(status, 200)
+        self.assertIn("선형 탐지", page)
+        table = self.server.shortener._urls_to_codes
+        path = " → ".join(str(index) for index in table.last_probe_path)
+        self.assertIn(f"최근 탐색 경로: {path}", page)
+        self.assertIn("빈 칸", page)
+        self.assertIn("(31×", page)
+        self.assertIn("Horner", page)

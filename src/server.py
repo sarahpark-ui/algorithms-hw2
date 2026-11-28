@@ -9,6 +9,7 @@ from urllib.parse import parse_qsl, urlsplit, quote
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.hash_table import LinearProbingHashTable
 from src.shortener import Shortener
 
 
@@ -36,16 +37,37 @@ class Handler(BaseHTTPRequestHandler):
             shortener = self.server.shortener
             for title, table in (("URL → 코드", shortener._urls_to_codes),
                                  ("코드 → URL", shortener._codes_to_urls)):
-                parts.append(f'<h3>{title} (M={table.capacity}, α={len(table)/table.capacity:.3f})</h3>')
-                parts.append('<table border="1"><tr><th>칸</th><th>연결 리스트 및 계산 근거</th></tr>')
-                for index, node in enumerate(table.buckets):
-                    chain = []
-                    while node is not None:
-                        trace = table.hash_trace(node.key)
-                        steps = '; '.join(f'{escape(repr(c))}: (31×{old}+{ord(c)}) mod {table.capacity}={new}' for c, old, new in trace)
-                        chain.append(f'<details><summary>{escape(node.key)} → {escape(str(node.value))}</summary>{steps or "h=0"}</details>')
-                        node = node.next
-                    parts.append(f'<tr><td>{index}</td><td>{" → ".join(chain) or "∅"}</td></tr>')
+                probing = isinstance(table, LinearProbingHashTable)
+                strategy = "선형 탐지" if probing else "별도 체이닝"
+                path = " → ".join(str(index) for index in table.last_probe_path) or "아직 없음"
+                parts.append(
+                    f'<h3>{title} · {strategy} (M={table.capacity}, '
+                    f'α={len(table)/table.capacity:.3f})</h3>'
+                )
+                parts.append(
+                    f'<p>최근 탐색 경로: {escape(path)} · 키 비교 '
+                    f'{table.last_comparisons}회 · 슬롯 확인 {table.last_slot_checks}회</p>'
+                )
+                parts.append('<table border="1"><tr><th>칸</th><th>상태 / 저장 내용 / Horner 근거</th></tr>')
+                for index in range(table.capacity):
+                    if probing:
+                        slot = table.slots[index]
+                        if slot is None:
+                            content = "빈 칸"
+                        elif isinstance(slot, tuple):
+                            key, value = slot
+                            content = self._table_entry(table, key, value)
+                        else:
+                            content = "삭제 표시 (tombstone)"
+                    else:
+                        node = table.buckets[index]
+                        entries = []
+                        while node is not None:
+                            entries.append(self._table_entry(table, node.key, node.value))
+                            node = node.next
+                        content = " → ".join(entries) or "빈 칸"
+                    marker = ' style="background:#fff3cd"' if index in table.last_probe_path else ""
+                    parts.append(f'<tr{marker}><td>{index}</td><td>{content}</td></tr>')
                 parts.append('</table>')
             self.page(200, ''.join(parts))
         else:
@@ -76,14 +98,29 @@ class Handler(BaseHTTPRequestHandler):
         self.page(200, f'<p>단축 링크: <a href="/{code}">/{code}</a></p>'
                   '<p>링크를 열거나 주소를 복사하세요.</p>')
 
+    @staticmethod
+    def _table_entry(table, key, value):
+        trace = table.hash_trace(key)
+        steps = '; '.join(
+            f'{escape(repr(character))}: (31×{previous}+{ord(character)}) '
+            f'mod {table.capacity}={current}'
+            for character, previous, current in trace
+        )
+        return (
+            f'<details><summary>{escape(key)} → {escape(str(value))}</summary>'
+            f'{steps or "h=0"}</details>'
+        )
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--table", choices=("chaining", "linear"), default="chaining")
     args = parser.parse_args()
     server = HTTPServer(("0.0.0.0", args.port), Handler)
-    server.shortener = Shortener()
-    print(f"Listening on port {args.port}", flush=True)
+    table_class = LinearProbingHashTable if args.table == "linear" else None
+    server.shortener = Shortener(table_class=table_class) if table_class else Shortener()
+    print(f"Listening on port {args.port} ({args.table})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
