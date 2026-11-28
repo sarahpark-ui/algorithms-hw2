@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-CSV_PATH = ROOT / "probe_results.csv"
+CSV_PATH = ROOT / "results.csv"
 PDF_PATH = ROOT / "probe_report.pdf"
 PAGE_WIDTH = 612
 PAGE_HEIGHT = 792
@@ -98,6 +98,40 @@ def _find_row(rows, strategy, target_load):
     return min(candidates, key=lambda row: abs(row["load_factor"] - target_load))
 
 
+def _interpretation(rows):
+    low_chaining = _find_row(rows, "chaining", 0.1)
+    low_linear = _find_row(rows, "linear", 0.1)
+    high_chaining = _find_row(rows, "chaining", 0.9)
+    high_linear = _find_row(rows, "linear", 0.9)
+    return (
+        "Initial SPEC draft (agent): full-table replacement of an existing key was unclear.",
+        "Raising OverflowError before searching for that key would be incorrect.",
+        "The student corrected SPEC.md directly in commit 181598c; only a new-key insert",
+        "into a full table should overflow.",
+        (
+            "At alpha~0.90, hit/miss key comparisons: chaining "
+            f'{high_chaining["successful_comparisons_measured"]:.2f}/'
+            f'{high_chaining["unsuccessful_comparisons_measured"]:.2f}; linear '
+            f'{high_linear["successful_comparisons_measured"]:.2f}/'
+            f'{high_linear["unsuccessful_comparisons_measured"]:.2f}.'
+        ),
+        (
+            "Hit/miss slot checks: chaining "
+            f'{high_chaining["successful_slots_measured"]:.2f}/'
+            f'{high_chaining["unsuccessful_slots_measured"]:.2f}; linear '
+            f'{high_linear["successful_slots_measured"]:.2f}/'
+            f'{high_linear["unsuccessful_slots_measured"]:.2f}.'
+        ),
+        (
+            "At alpha~0.10, unsuccessful slot checks were "
+            f'{low_chaining["unsuccessful_slots_measured"]:.2f} (chaining) vs '
+            f'{low_linear["unsuccessful_slots_measured"]:.2f} (linear).'
+        ),
+        "The gap is small at low load; near capacity, primary clustering sharply",
+        "increases linear-probing cost, while chaining stays comparatively stable.",
+    )
+
+
 def create_report():
     with CSV_PATH.open(newline="", encoding="utf-8") as file:
         rows = [
@@ -155,9 +189,13 @@ def create_report():
         _pdf_text(50, 291, "linear probing checks each visited slot, including the terminating empty slot.", 8),
         _pdf_text(50, 269, "The theoretical curves assume uniformly distributed home slots. Our fixed", 8),
         _pdf_text(50, 256, "Horner hash and finite sample can deviate, especially as primary clusters grow.", 8),
-        _pdf_text(50, 234, "Artifacts: probe_results.csv (all 18 rows) and probe_results.svg (four metrics).", 8),
+        _pdf_text(50, 234, "Artifacts: results.csv (all 18 rows) and probe_results.svg (four metrics).", 8),
         _pdf_text(50, 214, "Reproduce with: make experiment && make report", 8, True),
     ))
+    content.extend(
+        _pdf_text(50, 190 - index * 12, line, 8, index == 0)
+        for index, line in enumerate(_interpretation(rows))
+    )
     _write_pdf("".join(content))
     return PDF_PATH
 
