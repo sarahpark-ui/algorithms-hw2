@@ -16,7 +16,7 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
 endobj
 6 0 obj
-<< /Length 10497 >>
+<< /Length 11438 >>
 stream
 BT /F2 17 Tf 50.0 755.0 Td (Hash Table Probe Cost Comparison) Tj ET
 BT /F1 10 Tf 50.0 737.0 Td (Separate chaining vs. linear probing | fixed capacity: 4,096) Tj ET
@@ -183,8 +183,17 @@ BT /F1 8 Tf 50.0 304.0 Td (Reading: each cell is measured/theory. Chaining check
 BT /F1 8 Tf 50.0 291.0 Td (linear probing checks each visited slot, including the terminating empty slot.) Tj ET
 BT /F1 8 Tf 50.0 269.0 Td (The theoretical curves assume uniformly distributed home slots. Our fixed) Tj ET
 BT /F1 8 Tf 50.0 256.0 Td (Horner hash and finite sample can deviate, especially as primary clusters grow.) Tj ET
-BT /F1 8 Tf 50.0 234.0 Td (Artifacts: probe_results.csv \(all 18 rows\) and probe_results.svg \(four metrics\).) Tj ET
+BT /F1 8 Tf 50.0 234.0 Td (Artifacts: results.csv \(all 18 rows\) and probe_results.svg \(four metrics\).) Tj ET
 BT /F2 8 Tf 50.0 214.0 Td (Reproduce with: make experiment && make report) Tj ET
+BT /F2 8 Tf 50.0 190.0 Td (Initial SPEC draft \(agent\): full-table replacement of an existing key was unclear.) Tj ET
+BT /F1 8 Tf 50.0 178.0 Td (Raising OverflowError before searching for that key would be incorrect.) Tj ET
+BT /F1 8 Tf 50.0 166.0 Td (The student corrected SPEC.md directly in commit 181598c; only a new-key insert) Tj ET
+BT /F1 8 Tf 50.0 154.0 Td (into a full table should overflow.) Tj ET
+BT /F1 8 Tf 50.0 142.0 Td (At alpha~0.90, hit/miss key comparisons: chaining 1.44/0.92; linear 4.93/43.42.) Tj ET
+BT /F1 8 Tf 50.0 130.0 Td (Hit/miss slot checks: chaining 1.00/1.00; linear 4.93/44.42.) Tj ET
+BT /F1 8 Tf 50.0 118.0 Td (At alpha~0.10, unsuccessful slot checks were 1.00 \(chaining\) vs 1.13 \(linear\).) Tj ET
+BT /F1 8 Tf 50.0 106.0 Td (The gap is small at low load; near capacity, primary clustering sharply) Tj ET
+BT /F1 8 Tf 50.0 94.0 Td (increases linear-probing cost, while chaining stays comparatively stable.) Tj ET
 
 endstream
 endobj
@@ -200,5 +209,5 @@ xref
 trailer
 << /Size 7 /Root 1 0 R >>
 startxref
-10952
+11893
 %%EOF

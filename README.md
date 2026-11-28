@@ -48,7 +48,7 @@
 
 `make experiment`는 적재율 0.1~0.9에서 동일한 키 집합과 용량을 사용해
 두 방식의 성공/실패 탐색 키 비교 횟수와 슬롯 확인 횟수를 이론값과 함께
-`experiments/probe_results.csv` 및 `experiments/probe_results.svg`에 기록합니다.
+`experiments/results.csv` 및 `experiments/probe_results.svg`에 기록합니다.
 `make report`는 2쪽 이내의 PDF 실험 보고서도 생성합니다.
 
 ## 로컬에서 하기
