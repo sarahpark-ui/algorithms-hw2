@@ -10,6 +10,7 @@
 
 PORT ?= 8000
 TABLE ?= chaining
+CAPACITY ?= 128
 
 .PHONY: all test serve experiment report clean
 
@@ -19,7 +20,7 @@ test:
 	@python3 -m unittest discover -s tests -v
 
 serve:
-	@python3 src/server.py --port $(PORT) --table $(TABLE)
+	@python3 src/server.py --port $(PORT) --table $(TABLE) --capacity $(CAPACITY)
 
 experiment:
 	@PYTHONPATH=. python3 experiments/probe_experiment.py
