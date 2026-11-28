@@ -93,7 +93,7 @@ def measure(load_factor, capacity=CAPACITY, miss_queries=MISS_QUERIES):
 
 
 def write_csv(rows):
-    output = OUTPUT_DIR / "probe_results.csv"
+    output = OUTPUT_DIR / "results.csv"
     with output.open("w", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(
             file,
