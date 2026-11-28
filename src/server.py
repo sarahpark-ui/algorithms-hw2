@@ -9,7 +9,7 @@ from urllib.parse import parse_qsl, urlsplit, quote
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.hash_table import LinearProbingHashTable
+from src.hash_table import HashTable, LinearProbingHashTable
 from src.shortener import Shortener
 
 
@@ -40,6 +40,7 @@ class Handler(BaseHTTPRequestHandler):
                 probing = isinstance(table, LinearProbingHashTable)
                 strategy = "선형 탐지" if probing else "별도 체이닝"
                 path = " → ".join(str(index) for index in table.last_probe_path) or "아직 없음"
+                highlighted = list(table.last_probe_path)
                 parts.append(
                     f'<h3>{title} · {strategy} (M={table.capacity}, '
                     f'α={len(table)/table.capacity:.3f})</h3>'
@@ -48,25 +49,51 @@ class Handler(BaseHTTPRequestHandler):
                     f'<p>최근 탐색 경로: {escape(path)} · 키 비교 '
                     f'{table.last_comparisons}회 · 슬롯 확인 {table.last_slot_checks}회</p>'
                 )
-                parts.append('<table border="1"><tr><th>칸</th><th>상태 / 저장 내용 / Horner 근거</th></tr>')
+                parts.append(
+                    '<table border="1"><tr><th>칸</th>'
+                    '<th>상태 / 저장 내용 / 충돌 근거</th></tr>'
+                )
                 for index in range(table.capacity):
                     if probing:
                         slot = table.slots[index]
                         if slot is None:
                             content = "빈 칸"
-                        elif isinstance(slot, tuple):
-                            key, value = slot
-                            content = self._table_entry(table, key, value)
-                        else:
+                        elif slot is not None and not isinstance(slot, tuple):
                             content = "삭제 표시 (tombstone)"
+                        else:
+                            key, value, insertion_path, collision_slots = slot
+                            content = self._table_entry(
+                                table,
+                                key,
+                                value,
+                                index,
+                                bool(collision_slots),
+                                insertion_path=insertion_path,
+                                collision_slots=collision_slots,
+                            )
+                            for probe_index in insertion_path:
+                                if probe_index not in highlighted:
+                                    highlighted.append(probe_index)
                     else:
                         node = table.buckets[index]
                         entries = []
                         while node is not None:
-                            entries.append(self._table_entry(table, node.key, node.value))
+                            entries.append(
+                                self._table_entry(
+                                    table,
+                                    node.key,
+                                    node.value,
+                                    index,
+                                    node.had_collision,
+                                    as_list_item=True,
+                                )
+                            )
                             node = node.next
-                        content = " → ".join(entries) or "빈 칸"
-                    marker = ' style="background:#fff3cd"' if index in table.last_probe_path else ""
+                        content = (
+                            '<ol class="chain">' + "".join(entries) + '</ol>'
+                            if entries else "빈 칸"
+                        )
+                    marker = ' style="background:#fff3cd"' if index in highlighted else ""
                     parts.append(f'<tr{marker}><td>{index}</td><td>{content}</td></tr>')
                 parts.append('</table>')
             self.page(200, ''.join(parts))
@@ -99,16 +126,45 @@ class Handler(BaseHTTPRequestHandler):
                   '<p>링크를 열거나 주소를 복사하세요.</p>')
 
     @staticmethod
-    def _table_entry(table, key, value):
+    def _table_entry(
+        table,
+        key,
+        value,
+        storage_index,
+        had_collision,
+        insertion_path=None,
+        collision_slots=(),
+        as_list_item=False,
+    ):
         trace = table.hash_trace(key)
+        home_index = trace[-1][2] if trace else 0
         steps = '; '.join(
             f'{escape(repr(character))}: (31×{previous}+{ord(character)}) '
             f'mod {table.capacity}={current}'
             for character, previous, current in trace
         )
-        return (
-            f'<details><summary>{escape(key)} → {escape(str(value))}</summary>'
-            f'{steps or "h=0"}</details>'
+        entry = (
+            f'<strong>{escape(key)} → {escape(str(value))}</strong>'
+            f'<p>최초 해시 인덱스: {home_index} · 실제 저장 위치: {storage_index} · '
+            f'충돌 여부: {"예" if had_collision else "아니오"}</p>'
+        )
+        if insertion_path is not None:
+            path = " → ".join(str(index) for index in insertion_path)
+            collisions = ", ".join(str(index) for index in collision_slots) or "없음"
+            entry += (
+                f'<p>삽입 시 탐사 경로: {path} · 충돌한 슬롯: {collisions} · '
+                f'최종 저장 슬롯: {storage_index}</p>'
+            )
+        elif had_collision:
+            entry += '<p>충돌 처리: 같은 버킷의 연결 리스트에 추가</p>'
+        else:
+            entry += '<p>충돌 처리: 버킷에 직접 저장</p>'
+        entry += (
+            f'<details><summary>Horner 계산 과정</summary>{steps or "h=0"}</details>'
+        )
+        safe_key = escape(key, quote=True)
+        return f'<li class="hash-entry" data-key="{safe_key}">{entry}</li>' if as_list_item else (
+            f'<div class="hash-entry" data-key="{safe_key}">{entry}</div>'
         )
 
 
@@ -116,10 +172,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--table", choices=("chaining", "linear"), default="chaining")
+    parser.add_argument("--capacity", type=int, default=128)
     args = parser.parse_args()
     server = HTTPServer(("0.0.0.0", args.port), Handler)
-    table_class = LinearProbingHashTable if args.table == "linear" else None
-    server.shortener = Shortener(table_class=table_class) if table_class else Shortener()
+    table_class = LinearProbingHashTable if args.table == "linear" else HashTable
+    server.shortener = Shortener(table_class=table_class, capacity=args.capacity)
     print(f"Listening on port {args.port} ({args.table})", flush=True)
     try:
         server.serve_forever()
