@@ -2,12 +2,13 @@
 
 
 class _Node:
-    __slots__ = ("key", "value", "next")
+    __slots__ = ("key", "value", "next", "had_collision")
 
-    def __init__(self, key, value, next_node=None):
+    def __init__(self, key, value, next_node=None, had_collision=False):
         self.key = key
         self.value = value
         self.next = next_node
+        self.had_collision = had_collision
 
 
 class HashTable:
@@ -62,7 +63,7 @@ class HashTable:
                 node.value = value
                 return
             if node.next is None:
-                node.next = _Node(key, value)
+                node.next = _Node(key, value, had_collision=True)
                 self._size += 1
                 return
             node = node.next
@@ -166,6 +167,7 @@ class LinearProbingHashTable:
         self._reset_lookup_metrics()
         start = self._index(key)
         first_deleted = None
+        collision_slots = []
 
         for offset in range(self.capacity):
             index = (start + offset) % self.capacity
@@ -174,7 +176,12 @@ class LinearProbingHashTable:
             slot = self.slots[index]
             if slot is None:
                 target = first_deleted if first_deleted is not None else index
-                self.slots[target] = (key, value)
+                self.slots[target] = (
+                    key,
+                    value,
+                    list(self.last_probe_path),
+                    collision_slots,
+                )
                 self._size += 1
                 return
             if slot is _DELETED:
@@ -183,11 +190,17 @@ class LinearProbingHashTable:
                 continue
             self.last_comparisons += 1
             if slot[0] == key:
-                self.slots[index] = (key, value)
+                self.slots[index] = (key, value, slot[2], slot[3])
                 return
+            collision_slots.append(index)
 
         if first_deleted is not None:
-            self.slots[first_deleted] = (key, value)
+            self.slots[first_deleted] = (
+                key,
+                value,
+                list(self.last_probe_path),
+                collision_slots,
+            )
             self._size += 1
             return
         raise OverflowError("hash table is full")
@@ -245,4 +258,4 @@ class LinearProbingHashTable:
     def items(self):
         for slot in self.slots:
             if slot is not None and slot is not _DELETED:
-                yield slot
+                yield slot[0], slot[1]
